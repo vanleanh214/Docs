@@ -3,9 +3,9 @@
 🧠 **Cong thuc can phai nho**
 
 > [!TIP]
-> r = 4 ( Read - doc )
-> w = 2 ( Write - ghi )
-> x = 1 ( Excute - thuc thi)
+> - r = 4 ( Read - doc )
+> - w = 2 ( Write - ghi )
+> - x = 1 ( Excute - thuc thi)
 
 👉 **Cộng lại ra so**
 
