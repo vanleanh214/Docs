@@ -1,4 +1,4 @@
-##NHUNG LUU Y KHI VIET GITLAB-CI
+## NHUNG LUU Y KHI VIET GITLAB-CI
 **1. Setup configure**
 
 - Add ssh-key id-xxx.pub of PC-dev & PC-Devops to Gitlab Portal
