@@ -230,3 +230,129 @@ deploy_dev:
   tags:
     - evg-share
 ```
+
+Example 3: Deploy full 01 Project (FE-BE)
+
+```bash
+variables:
+  REPO_FE: "vanleanh202/ecomerce-fe"
+  REPO_BE: "vanleanh202/ecomerce-be"
+
+stages: 
+  - build_fe
+  - build_be
+  - build_prod
+  - deploy
+
+.login_repo_template:
+  before_script:
+    - docker login -u "$USER_REPO" -p "$PASS_REPO"
+
+build_fe_dev:
+  stage: build_fe
+  extends: .login_repo_template
+  script:
+    - cd 03-fe
+    - docker pull $REPO_FE:$CI_COMMIT_BRANCH.latest || true
+    - docker build --cache-from $REPO_FE:$CI_COMMIT_BRANCH.latest -t $REPO_FE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA -t $REPO_FE:$CI_COMMIT_BRANCH.latest .
+    - docker push $REPO_FE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA
+    - docker push $REPO_FE:$CI_COMMIT_BRANCH.latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == 'dev'
+  tags:
+    - evg-share
+
+build_be_dev:
+  stage: build_be
+  extends: .login_repo_template
+  script:
+    - cd 02-be
+    - docker pull $REPO_BE:$CI_COMMIT_BRANCH.latest || true
+    - docker build --cache-from $REPO_BE:$CI_COMMIT_BRANCH.latest -t $REPO_BE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA -t $REPO_BE:$CI_COMMIT_BRANCH.latest .
+    - docker push $REPO_BE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA
+    - docker push $REPO_BE:$CI_COMMIT_BRANCH.latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == 'dev'
+  tags:
+    - evg-share
+
+deploy_dev:
+  stage: deploy
+  image: alpine:latest
+  variables:
+    SSH_PATH: '/tmp/id_private'
+    PROJECT_DIR: '/home/evg-user/fullstack-ecommerce'
+  before_script:
+    - apk add --no-cache openssh-client
+    - echo "$SSH_PRIVATE_KEY_DEV" > $SSH_PATH
+    - chmod 600 $SSH_PATH
+  script:
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV "docker login -u '$USER_REPO' -p '$PASS_REPO'"
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV "cd $PROJECT_DIR && git reset --hard origin/dev && git pull origin dev"
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV "cd $PROJECT_DIR && yq e '.services.\"ecm-fe\".image = \"$REPO_FE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA\"' $PROJECT_DIR/docker-compose.yml -i"
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV "cd $PROJECT_DIR && yq e '.services.\"ecm-be\".image = \"$REPO_BE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA\"' $PROJECT_DIR/docker-compose.yml -i"
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV "cd "$PROJECT_DIR" && docker compose pull"
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV "cd "$PROJECT_DIR" && docker compose up -d"
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV 'docker ps -a'
+  after_script:
+    - ssh -i $SSH_PATH -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_DEV 'docker image prune -a -f'
+  rules:
+    - if: $CI_COMMIT_BRANCH == 'dev'
+  tags:
+    - evg-share
+
+.build_image_prod:
+  before_script:
+    - docker login -u $USER_REPO -p $PASS_REPO
+  script:
+    - docker pull $REPO_FE:$CI_COMMIT_BRANCH.latest || true
+    - docker pull $REPO_BE:$CI_COMMIT_BRANCH.latest || true
+    - cd 03-fe
+    - docker build --cache-from $REPO_FE:$CI_COMMIT_BRANCH.latest -t $REPO_FE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA -t $REPO_FE:$CI_COMMIT_BRANCH.latest .
+    - cd ../02-be
+    - docker build --cache-from $REPO_BE:$CI_COMMIT_BRANCH.latest -t $REPO_BE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA -t $REPO_BE:$CI_COMMIT_BRANCH.latest .
+    - docker push $REPO_FE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA
+    - docker push $REPO_BE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA
+    - docker push $REPO_FE:$CI_COMMIT_BRANCH.latest
+    - docker push $REPO_BE:$CI_COMMIT_BRANCH.latest
+  after_script:
+    - docker rmi $REPO_FE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA
+    - docker rmi $REPO_FE:$CI_COMMIT_BRANCH.latest
+    - docker rmi $REPO_BE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA
+    - docker rmi $REPO_BE:$CI_COMMIT_BRANCH.latest 
+
+build_prod:
+  stage: build_prod
+  extends: .build_image_prod
+  only:
+    - main
+  tags:
+    - evg-share 
+
+deploy_prod:
+  stage: deploy
+  image: alpine:latest
+  variables:
+    PROJECT_DIR: '/home/evg-user/full'
+  before_script:
+    - apk add --no-cache openssh-client
+    - chmod 600 "$SSH_PRIVATE_KEY_PROD" || true
+  script:
+    - ssh -i $SSH_PRIVATE_KEY_PROD -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_PROD "docker login -u '$USER_REPO' -p '$PASS_REPO'"
+      #    - ssh -i $SSH_PATH_PROD -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_PROD "cd $PROJECT_DIR && docker compose down"
+    - ssh -i $SSH_PRIVATE_KEY_PROD -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_PROD "yq e '.services.\"ecm-fe\".image = \"$REPO_FE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA\"' $PROJECT_DIR/docker-compose.yml -i"
+    - ssh -i $SSH_PRIVATE_KEY_PROD -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_PROD "yq e '.services.\"ecm-be\".image = \"$REPO_BE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA\"' $PROJECT_DIR/docker-compose.yml -i" 
+    - ssh -i $SSH_PRIVATE_KEY_PROD -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_PROD "cd $PROJECT_DIR && docker-compose pull"
+    - ssh -i $SSH_PRIVATE_KEY_PROD -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_PROD "cd $PROJECT_DIR && docker-compose up -d"
+    - ssh -i $SSH_PRIVATE_KEY_PROD -o StrictHostKeyChecking=no $SSH_USER_DEV@$SSH_IP_PROD "cd $PROJECT_DIR && docker-compose ps -a"
+  only:
+    - main
+  when: manual
+  tags:
+    - evg-share
+```
+
+Note:
+```bash
+	- Lay Private key cua server deploy -> tao variables dang file tren gitlab server -> tren server deploy "cat ~/.ssh/id_233.pub >> ~/.ssh/authorized"
+```
