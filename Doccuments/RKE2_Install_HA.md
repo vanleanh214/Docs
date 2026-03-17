@@ -1,5 +1,6 @@
 ## =======Cai dat ban phoi k8s (rke2)===========
 **1.In Master-k8s-01**
+
 Step 1: Install repository
 ```bash
 curl -sfL https://get.rke2.io | INSTALL_RKE2_METHOD=tar sh -
@@ -8,7 +9,7 @@ Step 2: Create & Modirfile file config
 ```bash
 mkdir -p /etc/rancher/rke2 && vi /etc/rancher/rke2/config.yaml
 ```
-Step 3:
+Step 3: Modirfile config.yaml
 ```bash
 tls-san:
   - k8s.cluster.local # IP VIP Load Balancer
@@ -20,6 +21,7 @@ Step 4: Start service
 systemctl start rke2-server
 ```
 **2.In Master-k8s-02**
+
 Step 1: Install repository
 ```bash
 curl -sfL https://get.rke2.io | INSTALL_RKE2_METHOD=tar sh -
@@ -48,6 +50,7 @@ Noted: Check logs init
 journalctl -u rke2-server -f
 ```
 **3.In Worker**
+
 Step 1: Install repository
 ```bash
 curl -sfL https://get.rke2.io | INSTALL_RKE2_METHOD=tar sh -
@@ -78,6 +81,7 @@ echo 'export KUBECONFIG=/etc/rancher/rke2/rke2.yaml' >> ~/.bashrc
 source ~/.bashrc
 ```
 **5.Remove worker node**
+
 Step 1:
 ```bash
 kubectl drain <TÊN_NODE_WORKER> --ignore-daemonsets --delete-emptydir-data
