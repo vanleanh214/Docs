@@ -351,7 +351,164 @@ deploy_prod:
   tags:
     - evg-share
 ```
+**Deploy k8s**
+```bash
+include:
+  - project: 'devops/cicd'
+    ref: 'master'
+    file: 'base/remove-img-old.yml'
+############ List stages ############
+stages:
+  - build
+  - replace
+  - deploy_k8s
+  - notify_success
+  - notify_failure
+  - remove_image_old
 
+########### Template ############
+.build_template:
+  before_script:
+    - docker login $CI_REGISTRY -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.strapi.latest || true
+    - docker build --cache-from $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.strapi.latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA.strapi -t $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.strapi.latest .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.strapi.latest
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA.strapi
+  after_script:
+    - docker rmi $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.strapi.latest
+    - docker rmi $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA.strapi
+    - docker rmi $(docker images -f "dangling=true" -q) || true
+
+.notify_success_template:
+  image: alpine
+  stage: notify_success
+  before_script:
+    - apk add --no-cache curl jq
+  variables:
+    CHAT_ID: "-4916051911"
+    TOKEN_BOT: "8249105997:AAGkbkMTPZlGrMJ5Sukg1aPtDgZu7bSbIjU"
+  script:
+    - |
+      curl -X POST "https://api.telegram.org/bot$TOKEN_BOT/sendMessage" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"chat_id\": \"$CHAT_ID\",
+        \"text\": \"✅ *${CI_PROJECT_NAME}* build succeed\n*Branch:* ${CI_COMMIT_REF_NAME}\n*Commit:* ${CI_COMMIT_MESSAGE}\",
+        \"parse_mode\": \"Markdown\" }"
+
+.notify_failure_template:
+  image: alpine
+  stage: notify_failure
+  before_script:
+    - apk add --no-cache curl jq
+  variables:
+    CHAT_ID: "-4916051911"
+    TOKEN_BOT: "8249105997:AAGkbkMTPZlGrMJ5Sukg1aPtDgZu7bSbIjU"
+  script:
+    - |
+      curl -X POST "https://api.telegram.org/bot$TOKEN_BOT/sendMessage" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"chat_id\": \"$CHAT_ID\",
+        \"text\": \"❌ *${CI_PROJECT_NAME}* build failed\n*Branch:* ${CI_COMMIT_REF_NAME}\n*Commit:* ${CI_COMMIT_MESSAGE}\",
+        \"parse_mode\": \"Markdown\" }"
+
+########### Job ############
+build_image:
+  stage: build
+  extends: .build_template
+  only:
+    - main
+  tags:
+    - evg
+
+replace-tag-image:
+  needs:
+    - build_image
+  stage: replace
+  variables:
+    VALUE_STRAPI: chart-core/strapi-agent-chat/values.yaml
+    TAG_PATH: .image.tag
+    IMAGE_TAG: "$CI_COMMIT_BRANCH.$CI_COMMIT_SHORT_SHA.strapi"
+  image: alpine:latest
+  before_script:
+    - apk update
+    - apk add git yq
+    - git clone https://$GIT_USER:$CI_PRIVATE_TOKEN@gitlab.evgcorp.net/devops/helm/chart-support-ai-prod.git
+    - cd chart-support-ai-prod
+    - git remote set-url origin "https://$GIT_USER:$CI_PRIVATE_TOKEN@gitlab.evgcorp.net/devops/helm/chart-support-ai-prod.git"
+    # Configure git user
+    - git config --global user.email "van.le@evgcorp.net"
+    - git config --global user.name "GitLab CI by Van"
+    # Reset to remote prod branch
+    - git fetch
+    - git checkout main
+    - git reset --hard origin/main
+
+  script:
+    # Update YAML file
+    - yq -i "$TAG_PATH = \"$IMAGE_TAG\"" $VALUE_STRAPI
+    - git add $VALUE_STRAPI
+    - git commit -m "CI Deploy $TAG_PATH to $IMAGE_TAG"
+    - git push -o ci.skip origin HEAD:main
+  only:
+    - main
+  tags:
+    - evg
+
+deploy_k8s:
+  needs:
+    - replace
+  stage: deploy
+  image: alpine:latest
+  variables:
+    PATH_DIR: '/root/chart-support-ai-prod/chart-core/strapi-agent-chat'
+  before_script:
+    - apk add --no-cache openssh-client
+    - chmod 600 "$SSH_KEY_K8S" || true
+  script:
+    - ssh -i $SSH_KEY_K8S -o StrictHostKeyChecking=no $SSH_USER@$IP_VAN "cd $PATH_DIR && git pull origin main"
+    - ssh -i $SSH_KEY_K8S -o StrictHostKeyChecking=no $SSH_USER@$IP_VAN "cd $PATH_DIR && helm --kubeconfig=/kube-config/dev/config upgrade --install strapi . -n support-ai"
+  when: manual
+  allow_failure: false
+  only:
+    - main
+  tags:
+    - evg
+
+
+prune_img_old:
+  stage: remove_image_old
+  extends:
+    - .remove-img
+  environment:
+    name: dev
+  variables:
+    GITOPS_SECRET: huyabc321
+    GITOPS: http://img-old-delete-img-old.argocd/delete
+  only:
+    - main
+  tags:
+    - k8s-dev
+
+notify_success:
+  extends: .notify_success_template
+  when: on_success
+  only:
+    - main
+  tags:
+    - evg
+
+notify_failure:
+  extends: .notify_failure_template
+  when: on_failure
+  allow_failure: false
+  only:
+    - main
+  tags:
+    - evg
+```
 Note:
 ```bash
 	- Lay Private key cua server deploy -> tao variables dang file tren gitlab server -> tren server deploy "cat ~/.ssh/id_233.pub >> ~/.ssh/authorized"
